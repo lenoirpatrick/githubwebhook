@@ -48,7 +48,7 @@ def webhook():
 def webhookdemo():
     # Vérifier la signature (optionnel)
     import json
-    with(open('demo.json', 'r')) as openjson:
+    with(open('demo/demo.json', 'r')) as openjson:
         webhook_github = json.load(openjson)
     
     return update_webhook(webhook_github)
