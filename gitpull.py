@@ -35,7 +35,6 @@ def webhook():
 
     # Récupérer les données du webhook
     webhook_github = request.json
-    print(webhook_github)
 
     # Vérifier que c'est un push sur la branche principale
     if webhook_github['ref'] == 'refs/heads/main':
