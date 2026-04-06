@@ -1,10 +1,30 @@
-from flask import Flask, request, abort
+from flask import Flask, request, jsonify, render_template_string
 import subprocess
 import os
+import json
 
 app = Flask(__name__)
 
+with(open('config.json', 'r')) as githubjson:
+    config_github = json.load(githubjson)
 
+@app.route('/')
+def home():
+    # Page HTML simple avec un lien vers /webhooktest
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Accueil - Webhook Demo</title>
+    </head>
+    <body>
+        <h1>Bienvenue sur le serveur de webhook GitHub</h1>
+        <p>Cliquez ci-dessous pour tester le webhook :</p>
+        <a href="/webhookdemo">Tester le webhook</a>
+    </body>
+    </html>
+    """
+    return render_template_string(html_content)
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -14,37 +34,37 @@ def webhook():
         pass
 
     # Récupérer les données du webhook
-    data = request.json
-    print(data)
+    webhook_github = request.json
+    print(webhook_github)
 
     # Vérifier que c'est un push sur la branche principale
-    if data['ref'] == 'refs/heads/main':
+    if webhook_github['ref'] == 'refs/heads/main':
         print("Nouveau push détecté ! Mise à jour en cours...")
 
-        # Mettre à jour le dépôt local
-        subprocess.run(['git', '-C', '/chemin/vers/votre/depot', 'pull'])
-
-        # Redémarrer le service ou exécuter un script de déploiement
-        subprocess.run(['sudo', 'systemctl', 'restart', 'votre_service'])
-
-        return "Mise à jour effectuée !", 200
+        return update_webhook(webhook_github), 200
     else:
         return "Ignoré : ce n'est pas un push sur la branche principale.", 200
 
-@app.route('/webhooktest', methods=['GET'])
-def webhooktest():
+@app.route('/webhookdemo', methods=['GET'])
+def webhookdemo():
     # Vérifier la signature (optionnel)
     import json
     with(open('demo.json', 'r')) as openjson:
         webhook_github = json.load(openjson)
     
-    print("hello")
-    print(webhook_github['repository']['full_name'])
+    return update_webhook(webhook_github)
 
-    subprocess.run(['git', '-C', '/home/pi/gitpull/test/pigpio', 'pull'])
-    return webhook_github['repository']['full_name']
+def update_webhook(webhook_github):
+    try:
+        repo = webhook_github['repository']['full_name']
+        path_repo = config_github[repo]['path']
+        command = ['git', '-C', path_repo, 'pull']
+        if os.path.isdir(path_repo):
+            subprocess.run(command)
+        return f"repo mis à jour dans {path_repo} avec la commande : {command}"
+    except Exception as ex:
+        return ex
 
-    # return "Ignoré : ce n'est pas un push sur la branche principale.", 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
