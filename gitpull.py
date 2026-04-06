@@ -4,9 +4,6 @@ import os
 
 app = Flask(__name__)
 
-# Clé secrète pour sécuriser le webhook (optionnel mais recommandé)
-SECRET = "votre_cle_secrete"
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
     # Vérifier la signature (optionnel)
