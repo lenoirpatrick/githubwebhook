@@ -59,6 +59,8 @@ def update_webhook(webhook_github):
         path_repo = config_github[repo]['path']
         command = ['git', '-C', path_repo, 'pull']
         if os.path.isdir(path_repo):
+            command_reset = ['git', 'reset', '--hard', 'HEAD~1']
+            subprocess.run(command_reset)
             subprocess.run(command)
         return f"repo mis à jour dans {path_repo} avec la commande : {command}"
     except Exception as ex:
