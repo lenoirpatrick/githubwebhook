@@ -5,6 +5,7 @@ import json
 
 app = Flask(__name__)
 
+
 with(open('config/config.json', 'r')) as githubjson:
     config_github = json.load(githubjson)
 
