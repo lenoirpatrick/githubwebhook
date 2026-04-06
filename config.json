@@ -1,5 +1,8 @@
 {
 	"lenoirpatrick/pigpio": {
 		"path": "/home/pi/app/pigpio"
+	},
+	"lenoirpatrick/githubwebhook": {
+		"path": "/home/pi/app/githubwebhook"
 	}
 }
