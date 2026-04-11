@@ -209,3 +209,4 @@ __marimo__/
 demo/demo.json
 config.json
 /.idea/
+nohup.out
