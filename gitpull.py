@@ -1,15 +1,12 @@
-from flask import Flask, request, jsonify, render_template_string
 import subprocess
 import os
+import socket
 import json
 
-app = Flask(__name__)
-
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 app = FastAPI()
-
 
 with(open('config/config.json', 'r')) as githubjson:
     config_github = json.load(githubjson)
@@ -77,4 +74,9 @@ def update_webhook(webhook_github):
 
 
 if __name__ == '__main__':
-    uvicorn.run(app, host='0.0.0.0', port=5000)
+    # Récupère le nom d'hôte de la machine
+    hostname = socket.gethostname()
+    # Récupère l'adresse IP associée au nom d'hôte
+    ip_address = socket.gethostbyname(hostname)
+
+    uvicorn.run(app, host=ip_address, port=5000)
