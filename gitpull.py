@@ -1,16 +1,21 @@
-from flask import Flask, request, jsonify, render_template_string
 import subprocess
 import os
+import socket
 import json
 
-app = Flask(__name__)
+import uvicorn
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 
-with(open('config.json', 'r')) as githubjson:
+app = FastAPI()
+
+with(open('config/config.json', 'r')) as githubjson:
     config_github = json.load(githubjson)
 
-@app.route('/')
-def home():
-    # Page HTML simple avec un lien vers /webhooktest
+
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    # Page HTML simple avec un lien vers /webhookdemo
     html_content = """
     <!DOCTYPE html>
     <html>
@@ -24,9 +29,10 @@ def home():
     </body>
     </html>
     """
-    return render_template_string(html_content)
+    return HTMLResponse(content=html_content, status_code=200)
 
-@app.route('/webhook', methods=['POST'])
+
+@app.post('/webhook')
 def webhook():
     # Vérifier la signature (optionnel)
     if request.headers.get('X-Hub-Signature-256'):
@@ -44,14 +50,16 @@ def webhook():
     else:
         return "Ignoré : ce n'est pas un push sur la branche principale.", 200
 
-@app.route('/webhookdemo', methods=['GET'])
+
+@app.get('/webhookdemo')
 def webhookdemo():
     # Vérifier la signature (optionnel)
     import json
-    with(open('demo.json', 'r')) as openjson:
+    with(open('demo/demo.json', 'r')) as openjson:
         webhook_github = json.load(openjson)
-    
+
     return update_webhook(webhook_github)
+
 
 def update_webhook(webhook_github):
     try:
@@ -59,6 +67,11 @@ def update_webhook(webhook_github):
         path_repo = config_github[repo]['path']
         command = ['git', '-C', path_repo, 'pull']
         if os.path.isdir(path_repo):
+            print("Retour en arrière")
+            command_reset = ['git', 'reset', '--hard', 'HEAD~1']
+            subprocess.run(command_reset)
+
+            print("Mise à jour du dépot")
             subprocess.run(command)
         return f"repo mis à jour dans {path_repo} avec la commande : {command}"
     except Exception as ex:
@@ -66,4 +79,6 @@ def update_webhook(webhook_github):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    ip_address = config_github.get("ip")
+
+    uvicorn.run(app, host=ip_address, port=5000)
