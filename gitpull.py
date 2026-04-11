@@ -14,7 +14,7 @@ with(open('config/config.json', 'r')) as githubjson:
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    # Page HTML simple avec un lien vers /webhookdemo
+    # Page HTML simple avec un lien vers /webhookgitlabdemo
     html_content = """
     <!DOCTYPE html>
     <html>
@@ -24,7 +24,7 @@ async def home():
     <body>
         <h1>Bienvenue sur le serveur de webhook GitHub</h1>
         <p>Cliquez ci-dessous pour tester le webhook :</p>
-        <a href="/webhookdemo">Tester le webhook</a>
+        <a href="/webhookgitlabdemo">Tester le webhook</a>
     </body>
     </html>
     """
@@ -50,8 +50,8 @@ def webhook(request: Request):
         return "Ignoré : ce n'est pas un push sur la branche principale.", 200
 
 
-@app.get('/webhookdemo')
-def webhookdemo():
+@app.get('/webhookgitlabdemo')
+def webhookgitlabdemo():
     # Vérifier la signature (optionnel)
     import json
     with(open('demo/demo.json', 'r')) as openjson:
