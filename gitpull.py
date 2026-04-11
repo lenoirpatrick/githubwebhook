@@ -5,13 +5,18 @@ import json
 
 app = Flask(__name__)
 
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+app = FastAPI()
+
 
 with(open('config/config.json', 'r')) as githubjson:
     config_github = json.load(githubjson)
 
-@app.route('/')
-def home():
-    # Page HTML simple avec un lien vers /webhooktest
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    # Page HTML simple avec un lien vers /webhookdemo
     html_content = """
     <!DOCTYPE html>
     <html>
@@ -25,9 +30,9 @@ def home():
     </body>
     </html>
     """
-    return render_template_string(html_content)
+    return HTMLResponse(content=html_content, status_code=200)
 
-@app.route('/webhook', methods=['POST'])
+@app.post('/webhook')
 def webhook():
     # Vérifier la signature (optionnel)
     if request.headers.get('X-Hub-Signature-256'):
@@ -45,7 +50,7 @@ def webhook():
     else:
         return "Ignoré : ce n'est pas un push sur la branche principale.", 200
 
-@app.route('/webhookdemo', methods=['GET'])
+@app.get('/webhookdemo')
 def webhookdemo():
     # Vérifier la signature (optionnel)
     import json
@@ -72,4 +77,4 @@ def update_webhook(webhook_github):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    uvicorn.run(app, host='0.0.0.0', port=5000)
