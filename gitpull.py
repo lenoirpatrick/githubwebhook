@@ -1,10 +1,9 @@
 import subprocess
 import os
-import socket
 import json
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
 app = FastAPI()
@@ -33,7 +32,7 @@ async def home():
 
 
 @app.post('/webhook')
-def webhook():
+def webhook(request: Request):
     # Vérifier la signature (optionnel)
     if request.headers.get('X-Hub-Signature-256'):
         # Ici, vous pouvez vérifier la signature avec votre clé secrète
