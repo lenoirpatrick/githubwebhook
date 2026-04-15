@@ -1,3 +1,5 @@
+""" Mies à jour automatique d'un dépot git """
+
 import subprocess
 import os
 import json
@@ -8,7 +10,7 @@ from fastapi.responses import HTMLResponse
 
 app = FastAPI()
 
-with(open('config/config.json', 'r')) as githubjson:
+with(open('config/config.json', 'r', encoding="utf-8")) as githubjson:
     config_github = json.load(githubjson)
 
 @app.get("/", response_class=HTMLResponse)
@@ -31,10 +33,12 @@ async def home():
 
 @app.get('/beats')
 def beats():
+    """ heart beats """
     return {"result": True}, 200
 
 @app.post('/webhook')
 def webhook(request: Request):
+    """ webhook pour lancer le pull de github """
     # Vérifier la signature (optionnel)
     if request.headers.get('X-Hub-Signature-256'):
         # Ici, vous pouvez vérifier la signature avec votre clé secrète
@@ -48,15 +52,14 @@ def webhook(request: Request):
         print("Nouveau push détecté ! Mise à jour en cours...")
 
         return update_webhook(webhook_github), 200
-    else:
-        return "Ignoré : ce n'est pas un push sur la branche principale.", 200
+    return "Ignoré : ce n'est pas un push sur la branche principale.", 200
 
 
 @app.get('/webhookdemo')
 def webhookdemo():
+    """ gitpull de demo """
     # Vérifier la signature (optionnel)
-    import json
-    with(open('demo/demo.json', 'r')) as openjson:
+    with(open('demo/demo.json', 'r', encoding="utf-8")) as openjson:
         webhook_github = json.load(openjson)
 
     return update_webhook(webhook_github), 200
@@ -72,13 +75,14 @@ def update_webhook(webhook_github):
         if os.path.isdir(path_repo):
             print("Retour en arrière")
             command_reset = ['git', 'reset', '--hard', 'HEAD~1']
-            subprocess.run(command_reset)
+            subprocess.run(command_reset, check=True)
 
             print("Mise à jour du dépot")
             retour_git = subprocess.run(command,
                 stdout=subprocess.PIPE,  # Capturer la sortie standard
                 stderr=subprocess.PIPE,  # Capturer la sortie d'erreur
                 text=True,  # Retourner les sorties sous forme de chaînes de caractères
+                check=True
             )
 
             # Vérifier le code de retour
@@ -101,7 +105,7 @@ def update_webhook(webhook_github):
         # retour vers home assistant
 
         return retour
-    except Exception as ex:
+    except (Exception, ) as ex:
         return ex
 
 
