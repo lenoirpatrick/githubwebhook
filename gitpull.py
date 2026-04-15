@@ -15,6 +15,7 @@ with(open('config/config.json', 'r', encoding="utf-8")) as githubjson:
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
+    """ Page index """
     # Page HTML simple avec un lien vers /webhookdemo
     html_content = """
     <!DOCTYPE html>
@@ -66,47 +67,45 @@ def webhookdemo():
 
 
 def update_webhook(webhook_github):
-    try:
-        repo = webhook_github['repository']['full_name']
-        path_repo = config_github[repo]['path']
-        command = ['git', '-C', path_repo, 'pull']
-        result = True
-        message = f"repo mis à jour dans {path_repo} avec la commande : {command}"
-        if os.path.isdir(path_repo):
-            print("Retour en arrière")
-            command_reset = ['git', 'reset', '--hard', 'HEAD~1']
-            subprocess.run(command_reset, check=True)
+    """ Fonction commune de mise à jour du dépot """
+    repo = webhook_github['repository']['full_name']
+    path_repo = config_github[repo]['path']
+    command = ['git', '-C', path_repo, 'pull']
+    result = True
+    message = f"repo mis à jour dans {path_repo} avec la commande : {command}"
+    if os.path.isdir(path_repo):
+        print("Retour en arrière")
+        command_reset = ['git', 'reset', '--hard', 'HEAD~1']
+        subprocess.run(command_reset, check=True)
 
-            print("Mise à jour du dépot")
-            retour_git = subprocess.run(command,
-                stdout=subprocess.PIPE,  # Capturer la sortie standard
-                stderr=subprocess.PIPE,  # Capturer la sortie d'erreur
-                text=True,  # Retourner les sorties sous forme de chaînes de caractères
-                check=True
-            )
+        print("Mise à jour du dépot")
+        retour_git = subprocess.run(command,
+            stdout=subprocess.PIPE,  # Capturer la sortie standard
+            stderr=subprocess.PIPE,  # Capturer la sortie d'erreur
+            text=True,  # Retourner les sorties sous forme de chaînes de caractères
+            check=True
+        )
 
-            # Vérifier le code de retour
-            if retour_git.returncode == 0:
-                print("La commande a réussi.")
-                print(f"Sortie standard : {retour_git.stdout}")
-                message = retour_git.stdout  # Message de retour en cas de succès
-                result = True
-            else:
-                print(f"La commande a échoué avec le code {retour_git.returncode}.")
-                print(f"Sortie d'erreur : {retour_git.stderr}")
-                message = retour_git.stderr  # Message d'erreur
-                result = False
+        # Vérifier le code de retour
+        if retour_git.returncode == 0:
+            print("La commande a réussi.")
+            print(f"Sortie standard : {retour_git.stdout}")
+            message = retour_git.stdout  # Message de retour en cas de succès
+            result = True
+        else:
+            print(f"La commande a échoué avec le code {retour_git.returncode}.")
+            print(f"Sortie d'erreur : {retour_git.stderr}")
+            message = retour_git.stderr  # Message d'erreur
+            result = False
 
-        retour = {
-            "result": result,
-            "message": message
-        }
+    retour = {
+        "result": result,
+        "message": message
+    }
 
-        # retour vers home assistant
+    # retour vers home assistant
 
-        return retour
-    except (Exception, ) as ex:
-        return ex
+    return retour
 
 
 if __name__ == '__main__':
