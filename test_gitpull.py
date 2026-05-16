@@ -26,28 +26,31 @@ DEMO_PAYLOAD = {
 @pytest.fixture(autouse=True)
 def patch_config(tmp_path):
     """Remplace la config globale et les fichiers lus au module-level."""
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    (config_dir / "config.json").write_text(json.dumps(CONFIG_FIXTURE), encoding="utf-8")
+    import gitpull
+    original = dict(gitpull.config_github)
+    original_base = gitpull.BASE_DIR
+    original_config_path = gitpull.CONFIG_PATH
 
     demo_dir = tmp_path / "demo"
     demo_dir.mkdir()
     (demo_dir / "demo.json").write_text(json.dumps(DEMO_PAYLOAD), encoding="utf-8")
 
-    import gitpull
-    original = dict(gitpull.config_github)
-    original_base = gitpull.BASE_DIR
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_path = config_dir / "config.json"
+    config_path.write_text(json.dumps(CONFIG_FIXTURE), encoding="utf-8")
 
     gitpull.config_github.clear()
     gitpull.config_github.update(CONFIG_FIXTURE)
     gitpull.BASE_DIR = tmp_path
-    (tmp_path / "demo" / "demo.json").write_text(json.dumps(DEMO_PAYLOAD), encoding="utf-8")
+    gitpull.CONFIG_PATH = config_path
 
     yield
 
     gitpull.config_github.clear()
     gitpull.config_github.update(original)
     gitpull.BASE_DIR = original_base
+    gitpull.CONFIG_PATH = original_config_path
 
 
 @pytest.fixture()
@@ -216,3 +219,71 @@ class TestUpdateWebhook:
 
         assert result["result"] is False
         assert "fatal: reset error" in result["message"]
+
+
+# ---------------------------------------------------------------------------
+# GET /config/repos
+# ---------------------------------------------------------------------------
+
+class TestConfigRepos:
+    def test_list_excludes_ip_and_secret(self, client):
+        resp = client.get("/config/repos")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "ip" not in data
+        assert "webhook_secret" not in data
+        assert "lenoirpatrick/testrepo" in data
+
+    def test_add_repo(self, client):
+        resp = client.post("/config/repos", json={"repo": "owner/newrepo", "path": "/tmp/newrepo"})
+        assert resp.status_code == 201
+        assert resp.json()["result"] is True
+        import gitpull
+        assert "owner/newrepo" in gitpull.config_github
+
+    def test_add_duplicate_returns_409(self, client):
+        resp = client.post("/config/repos", json={"repo": "lenoirpatrick/testrepo", "path": "/tmp/x"})
+        assert resp.status_code == 409
+
+    def test_update_repo(self, client):
+        resp = client.put("/config/repos/lenoirpatrick/testrepo",
+                          json={"repo": "lenoirpatrick/testrepo", "path": "/new/path"})
+        assert resp.status_code == 200
+        import gitpull
+        assert gitpull.config_github["lenoirpatrick/testrepo"]["path"] == "/new/path"
+
+    def test_update_unknown_repo_returns_404(self, client):
+        resp = client.put("/config/repos/unknown/repo",
+                          json={"repo": "unknown/repo", "path": "/tmp/x"})
+        assert resp.status_code == 404
+
+    def test_delete_repo(self, client):
+        resp = client.delete("/config/repos/lenoirpatrick/testrepo")
+        assert resp.status_code == 200
+        import gitpull
+        assert "lenoirpatrick/testrepo" not in gitpull.config_github
+
+    def test_delete_unknown_repo_returns_404(self, client):
+        resp = client.delete("/config/repos/unknown/repo")
+        assert resp.status_code == 404
+
+    def test_config_persisted_to_file(self, client):
+        import gitpull
+        client.post("/config/repos", json={"repo": "owner/saved", "path": "/tmp/saved"})
+        saved = json.loads(gitpull.CONFIG_PATH.read_text(encoding="utf-8"))
+        assert "owner/saved" in saved
+
+
+# ---------------------------------------------------------------------------
+# Issue #26 — config.json absent au démarrage
+# ---------------------------------------------------------------------------
+
+class TestLoadConfig:
+    def test_creates_default_config_if_missing(self, tmp_path):
+        import gitpull
+        missing_path = tmp_path / "nodir" / "config.json"
+        gitpull.CONFIG_PATH = missing_path
+        result = gitpull._load_config()
+        assert result == {"ip": "127.0.0.1"}
+        assert missing_path.exists()
+        gitpull.CONFIG_PATH = tmp_path / "config" / "config.json"
