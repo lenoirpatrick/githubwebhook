@@ -34,7 +34,7 @@ GitHub enverra alors un événement `POST /webhook` à chaque push. Seuls les pu
 
 # Installation
 ```shell
-git clone githubwebhook.git
+git clone https://github.com/lenoirpatrick/githubwebhook.git
 cd githubwebhook
 pip install -r requirements.txt --break-system-packages
 chmod +x run.sh
@@ -42,7 +42,11 @@ chmod +x run.sh
 
 # Configuration
 
-Dans le répertoire `config`, créer un fichier `config.json` :
+Si le fichier `config/config.json` est absent au démarrage, il est créé automatiquement avec les valeurs par défaut (`ip: 127.0.0.1`). L'application ne plante pas.
+
+Le fichier peut être édité manuellement ou via l'interface web de la page d'accueil (boutons Ajouter / Modifier / Supprimer).
+
+Structure du fichier :
 
 ```json
 {
@@ -63,7 +67,7 @@ Dans le répertoire `config`, créer un fichier `config.json` :
 | `webhook_secret` | Secret partagé avec GitHub pour valider la signature HMAC-SHA256 (optionnel mais recommandé) |
 | `"owner/repo"` | Chemin absolu local du dépôt à mettre à jour lors d'un push sur `main` |
 
-Plusieurs dépôts peuvent être configurés simultanément.
+Plusieurs dépôts peuvent être configurés simultanément. Toute modification via l'interface web est immédiatement persistée dans `config.json`.
 
 # Lancement
 
