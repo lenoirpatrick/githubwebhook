@@ -134,11 +134,21 @@ class TestWebhook:
 # ---------------------------------------------------------------------------
 
 class TestWebhookDemo:
-    def test_calls_update_webhook(self, client):
-        with patch("gitpull.update_webhook", return_value={"result": True, "message": "demo ok"}) as mock_upd:
-            resp = client.get("/webhookdemo")
+    def test_returns_html(self, client):
+        resp = client.get("/webhookdemo")
         assert resp.status_code == 200
-        mock_upd.assert_called_once_with(DEMO_PAYLOAD)
+        assert "text/html" in resp.headers["content-type"]
+
+    def test_shows_repo_and_commands(self, client):
+        resp = client.get("/webhookdemo")
+        assert "lenoirpatrick/testrepo" in resp.text
+        assert "git" in resp.text
+        assert "pull" in resp.text
+
+    def test_no_real_path_required(self, client):
+        """La page s'affiche même si le répertoire du repo n'existe pas."""
+        resp = client.get("/webhookdemo")
+        assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
