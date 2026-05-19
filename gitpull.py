@@ -82,18 +82,35 @@ body { background-color: #0d1117 !important; }
 .swagger-ui section.models { background: #161b22; border-color: #30363d; }
 .swagger-ui section.models .model-container { background: #0d1117; border-color: #30363d; }
 .swagger-ui section.models .model-container:hover { background: #0d1117; }
+/* Titres de schémas : h4 + tous ses enfants inline (span, button, small, svg) */
 .swagger-ui section.models h4 { color: #c9d1d9; border-color: #30363d; }
+.swagger-ui section.models h4 span,
+.swagger-ui section.models h4 small,
+.swagger-ui section.models h4 button { color: #c9d1d9; background: none; border: none; cursor: pointer; }
+/* Bouton "Collapse all" / flèche inline dans le titre de chaque schéma */
+.swagger-ui .model-box-control,
+.swagger-ui .model-box-control:focus { background: none; border: none; color: #c9d1d9; }
+.swagger-ui .model-box-control svg,
+.swagger-ui section.models h4 svg { fill: #c9d1d9; }
 .swagger-ui .model-title { color: #c9d1d9; }
+.swagger-ui span.model-title__text { color: #c9d1d9; }
+.swagger-ui .models-control { background: none; color: #c9d1d9; }
+.swagger-ui .models-control svg { fill: #c9d1d9; }
+/* Flèches toggle dans l'arbre des propriétés */
 .swagger-ui .model-toggle:after { filter: invert(1); }
+.swagger-ui .model-toggle { background: none; }
+/* Propriétés */
 .swagger-ui .prop-type { color: #58a6ff; }
 .swagger-ui .prop-format { color: #8b949e; }
 .swagger-ui table.model tr.property-row td { color: #c9d1d9; border-color: #30363d; }
 .swagger-ui .model span,
-.swagger-ui .model .property { color: #c9d1d9; }
+.swagger-ui .model .property,
+.swagger-ui .model span.prop-name { color: #c9d1d9; }
 .swagger-ui .model .property.primitive { color: #3fb950; }
+/* "Any of", "One of", "All of" wrappers */
+.swagger-ui .model .inner-object { background: #161b22; }
+.swagger-ui .model span.model { background: #161b22; color: #c9d1d9; }
 .swagger-ui .model-hint { background: #30363d; color: #c9d1d9; }
-.swagger-ui span.model-title__text { color: #c9d1d9; }
-.swagger-ui .models-control { background: none; color: #c9d1d9; }
 .swagger-ui .opblock-body .model-example { background: #161b22; }
 .swagger-ui .tab li { color: #8b949e; }
 .swagger-ui .tab li.active { color: #c9d1d9; }
