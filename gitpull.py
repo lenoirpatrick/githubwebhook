@@ -3,8 +3,11 @@
 import hashlib
 import hmac
 import json
+import os
 import pathlib
 import subprocess
+import sys
+import threading
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -15,7 +18,7 @@ from pydantic import BaseModel
 app = FastAPI(
     title="GitHub Webhook Server",
     description="Serveur de webhook GitHub pour déploiement CI/CD automatique via `git pull`.",
-    version="1.3.0",
+    version="1.4.0",
     docs_url=None,
 )
 
@@ -246,6 +249,11 @@ async def home():
     .btn-edit:hover { background: #30363d; }
     .btn-delete { background: transparent; color: #f85149; border-color: #f8514944; margin-left: 0.4rem; }
     .btn-delete:hover { background: #f8514911; }
+    .btn-deploy { background: transparent; color: #3fb950; border-color: #3fb95044; margin-left: 0.4rem; }
+    .btn-deploy:hover { background: #3fb95011; }
+    .btn-reload { background: #9e6a03; color: #fff; border: 1px solid #bb8009; margin-left: 0.75rem; }
+    .btn-reload:hover { opacity: 0.85; }
+    .btn-reload:disabled { opacity: 0.5; cursor: not-allowed; }
 
     /* Modal */
     .modal-overlay {
@@ -289,6 +297,7 @@ async def home():
     <p class="subtitle">Déploiement CI/CD automatique via <code>git pull</code> au push sur <strong>main</strong>.</p>
     <div class="badge">En ligne</div><br/>
     <a href="/webhookdemo" class="btn btn-primary">▶ Lancer la démo</a>
+    <button id="reload-btn" class="btn btn-reload" onclick="reloadServer()">↺ Recharger</button>
   </div>
 
   <!-- Repos panel -->
@@ -348,6 +357,7 @@ async def home():
           <td><code>${repo}</code></td>
           <td class="path">${cfg.path}</td>
           <td class="actions">
+            <button class="btn-sm btn-deploy" onclick="deployRepo('${repo}')">Deploy</button>
             <button class="btn-sm btn-edit" onclick="showModal('${repo}','${cfg.path}')">Modifier</button>
             <button class="btn-sm btn-delete" onclick="deleteRepo('${repo}')">Supprimer</button>
           </td>
@@ -396,6 +406,27 @@ async def home():
       const [owner, repoName] = repo.split('/');
       await fetch(`/config/repos/${owner}/${repoName}`, {method: 'DELETE'});
       loadRepos();
+    }
+
+    async function deployRepo(repo) {
+      if (!confirm(`Lancer le deploy de ${repo} ?`)) return;
+      const [owner, repoName] = repo.split('/');
+      const res = await fetch(`/deploy/${owner}/${repoName}`, {method: 'POST'});
+      const data = await res.json();
+      alert(data.result ? `✓ ${data.message}` : `✗ ${data.message}`);
+    }
+
+    async function reloadServer() {
+      if (!confirm('Redémarrer le serveur ?')) return;
+      const btn = document.getElementById('reload-btn');
+      btn.disabled = true;
+      btn.textContent = '↺ Redémarrage…';
+      try { await fetch('/reload', {method: 'POST'}); } catch {}
+      await new Promise(r => setTimeout(r, 1500));
+      (function poll() {
+        fetch('/beats').then(r => { if (r.ok) location.reload(); else setTimeout(poll, 500); })
+                       .catch(() => setTimeout(poll, 500));
+      })();
     }
 
     window.onload = loadRepos;
@@ -562,6 +593,26 @@ def webhookdemo():
 </body>
 </html>"""
     return HTMLResponse(content=html, status_code=200)
+
+
+@app.post('/deploy/{owner}/{repo_name}')
+def deploy(owner: str, repo_name: str):
+    """ Déclenche un git pull sur le dépôt configuré """
+    key = f"{owner}/{repo_name}"
+    if key not in config_github:
+        raise HTTPException(status_code=404, detail=f"Repo {key} non configuré")
+    return update_webhook({"repository": {"full_name": key}})
+
+
+@app.post('/reload')
+def reload_server():
+    """ Redémarre le processus serveur via os.execv """
+    def _restart():
+        import time
+        time.sleep(0.5)
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    threading.Thread(target=_restart, daemon=True).start()
+    return {"result": True, "message": "Redémarrage en cours…"}
 
 
 def update_webhook(webhook_github):
