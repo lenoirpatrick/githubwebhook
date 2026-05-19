@@ -5,25 +5,21 @@ import hmac
 import json
 import os
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import threading
+from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-app = FastAPI(
-    title="GitHub Webhook Server",
-    description="Serveur de webhook GitHub pour déploiement CI/CD automatique via `git pull`.",
-    version="1.4.0",
-    docs_url=None,
-)
-
 BASE_DIR = pathlib.Path(__file__).parent
 CONFIG_PATH = BASE_DIR / 'config' / 'config.json'
+DB_PATH = BASE_DIR / 'data' / 'deployments.db'
 
 
 def _load_config() -> dict:
@@ -43,6 +39,45 @@ def _save_config() -> None:
 
 
 config_github = _load_config()
+
+
+def _init_db() -> None:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS deployment_log (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                action    TEXT    NOT NULL,
+                repo      TEXT,
+                status    TEXT    NOT NULL DEFAULT 'ok',
+                message   TEXT
+            )
+        """)
+
+
+def log_action(action: str, repo: str = None, status: str = 'ok', message: str = '') -> None:
+    _init_db()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO deployment_log (action, repo, status, message) VALUES (?, ?, ?, ?)",
+            (action, repo, status, message),
+        )
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    log_action('startup')
+    yield
+
+
+app = FastAPI(
+    title="GitHub Webhook Server",
+    description="Serveur de webhook GitHub pour déploiement CI/CD automatique via `git pull`.",
+    version="1.4.0",
+    docs_url=None,
+    lifespan=_lifespan,
+)
 
 
 class RepoConfig(BaseModel):
@@ -321,6 +356,7 @@ async def home():
   </div>
 
   <footer>
+    <a href="/history">Historique</a>
     <a href="/beats">Health check</a>
     <a href="/docs">API docs</a>
     <a href="https://github.com/lenoirpatrick/githubwebhook" target="_blank" rel="noopener">GitHub</a>
@@ -352,16 +388,22 @@ async def home():
         tbody.innerHTML = '<tr><td colspan="3" class="empty">Aucun dépôt configuré — cliquez sur « Ajouter ».</td></tr>';
         return;
       }
-      tbody.innerHTML = entries.map(([repo, cfg]) => `
-        <tr>
-          <td><code>${repo}</code></td>
+      tbody.innerHTML = entries.map(([repo, cfg]) => {
+        const dot = cfg.last_status === 'error'
+          ? `<span style="color:#f85149;margin-right:.4rem" title="Dernier déploiement en erreur">●</span>`
+          : cfg.last_status === 'ok'
+            ? `<span style="color:#3fb950;margin-right:.4rem" title="Dernier déploiement réussi">●</span>`
+            : `<span style="color:#484f58;margin-right:.4rem" title="Aucun déploiement enregistré">○</span>`;
+        return `<tr>
+          <td>${dot}<code>${repo}</code></td>
           <td class="path">${cfg.path}</td>
           <td class="actions">
             <button class="btn-sm btn-deploy" onclick="deployRepo('${repo}')">Deploy</button>
             <button class="btn-sm btn-edit" onclick="showModal('${repo}','${cfg.path}')">Modifier</button>
             <button class="btn-sm btn-delete" onclick="deleteRepo('${repo}')">Supprimer</button>
           </td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
     }
 
     function showModal(repo='', path='') {
@@ -444,8 +486,21 @@ def beats():
 
 @app.get('/config/repos')
 def list_repos():
-    """ Liste les dépôts configurés """
-    return {k: v for k, v in config_github.items() if k not in ('ip', 'webhook_secret')}
+    """ Liste les dépôts configurés avec leur dernier statut de déploiement """
+    repos = {k: dict(v) for k, v in config_github.items() if k not in ('ip', 'webhook_secret')}
+    _init_db()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        for repo in repos:
+            row = conn.execute(
+                "SELECT status, timestamp FROM deployment_log "
+                "WHERE repo = ? AND action IN ('git_pull', 'git_reset') "
+                "ORDER BY id DESC LIMIT 1",
+                (repo,),
+            ).fetchone()
+            repos[repo]['last_status'] = row['status'] if row else None
+            repos[repo]['last_timestamp'] = row['timestamp'] if row else None
+    return repos
 
 
 @app.post('/config/repos', status_code=201)
@@ -496,10 +551,13 @@ async def webhook(request: Request):
 
     webhook_github = json.loads(body)
 
+    repo = webhook_github.get('repository', {}).get('full_name')
     if webhook_github.get('ref') == 'refs/heads/main':
         print("Nouveau push détecté ! Mise à jour en cours...")
+        log_action('webhook', repo=repo, status='ok')
         return update_webhook(webhook_github)
 
+    log_action('webhook', repo=repo, status='ok', message='ignored: not main branch')
     return {"result": False, "message": "Ignoré : ce n'est pas un push sur la branche principale."}
 
 
@@ -601,18 +659,198 @@ def deploy(owner: str, repo_name: str):
     key = f"{owner}/{repo_name}"
     if key not in config_github:
         raise HTTPException(status_code=404, detail=f"Repo {key} non configuré")
+    log_action('deploy', repo=key, status='ok')
     return update_webhook({"repository": {"full_name": key}})
 
 
 @app.post('/reload')
 def reload_server():
     """ Redémarre le processus serveur via os.execv """
+    log_action('reload', status='ok')
     def _restart():
         import time
         time.sleep(0.5)
         os.execv(sys.executable, [sys.executable] + sys.argv)
     threading.Thread(target=_restart, daemon=True).start()
     return {"result": True, "message": "Redémarrage en cours…"}
+
+
+@app.get('/api/history')
+def api_history(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    repo: str = Query(None),
+    status: str = Query(None),
+):
+    """ Historique paginé des actions (filtrable par repo et statut) """
+    _init_db()
+    conditions, params = [], []
+    if repo:
+        conditions.append("repo = ?")
+        params.append(repo)
+    if status:
+        conditions.append("status = ?")
+        params.append(status)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        total = conn.execute(f"SELECT COUNT(*) FROM deployment_log {where}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM deployment_log {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [per_page, (page - 1) * per_page],
+        ).fetchall()
+    return {"total": total, "page": page, "per_page": per_page, "items": [dict(r) for r in rows]}
+
+
+@app.get('/history', response_class=HTMLResponse)
+def history_page():
+    """ Page HTML d'historique des déploiements """
+    html = """<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Historique — GitHub Webhook Server</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0d1117; color: #e6edf3;
+      min-height: 100vh; display: flex; flex-direction: column;
+      align-items: center; padding: 3rem 1rem 4rem; gap: 1.5rem;
+    }
+    h1 { font-size: 1.3rem; font-weight: 600; color: #f0f6fc; }
+    .filters {
+      display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;
+      background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+      padding: 0.9rem 1.25rem; width: 100%; max-width: 900px;
+    }
+    .filters label { font-size: 0.78rem; color: #8b949e; }
+    .filters input, .filters select {
+      background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+      color: #e6edf3; font-size: 0.85rem; padding: 0.3rem 0.6rem; outline: none;
+    }
+    .filters input:focus, .filters select:focus { border-color: #58a6ff; }
+    .btn-filter {
+      background: #238636; color: #fff; border: 1px solid #2ea043;
+      border-radius: 6px; padding: 0.35rem 1rem; font-size: 0.85rem; cursor: pointer;
+    }
+    .btn-filter:hover { opacity: 0.85; }
+    .panel {
+      background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+      width: 100%; max-width: 900px; overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      text-align: left; padding: 0.6rem 1rem;
+      font-size: 0.72rem; font-weight: 600; color: #8b949e;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      border-bottom: 1px solid #21262d;
+    }
+    td { padding: 0.6rem 1rem; font-size: 0.82rem; border-bottom: 1px solid #21262d; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #1c2128; }
+    td code { color: #58a6ff; font-size: 0.8rem; }
+    td.msg { color: #8b949e; font-size: 0.78rem; max-width: 260px;
+              white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    td.empty { color: #484f58; text-align: center; padding: 2rem; }
+    .badge-ok { color: #3fb950; font-weight: 600; }
+    .badge-err { color: #f85149; font-weight: 600; }
+    .pagination { display: flex; gap: 0.5rem; align-items: center; font-size: 0.82rem; }
+    .page-btn {
+      background: #21262d; border: 1px solid #30363d; color: #e6edf3;
+      border-radius: 6px; padding: 0.3rem 0.75rem; cursor: pointer;
+    }
+    .page-btn:hover { background: #30363d; }
+    .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    footer { display: flex; gap: 1.5rem; font-size: 0.78rem; margin-top: 0.5rem; }
+    footer a { color: #484f58; text-decoration: none; transition: color 0.15s; }
+    footer a:hover { color: #8b949e; }
+  </style>
+</head>
+<body>
+  <h1>Historique des déploiements</h1>
+
+  <div class="filters">
+    <label>Dépôt</label>
+    <input type="text" id="f-repo" placeholder="owner/repo" style="width:180px"/>
+    <label>Statut</label>
+    <select id="f-status">
+      <option value="">Tous</option>
+      <option value="ok">ok</option>
+      <option value="error">error</option>
+    </select>
+    <button class="btn-filter" onclick="load(1)">Filtrer</button>
+    <span id="total-label" style="margin-left:auto;color:#8b949e;font-size:0.78rem"></span>
+  </div>
+
+  <div class="panel">
+    <table>
+      <thead>
+        <tr>
+          <th>Horodatage</th>
+          <th>Action</th>
+          <th>Dépôt</th>
+          <th>Statut</th>
+          <th>Message</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td colspan="5" class="empty">Chargement…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pagination">
+    <button class="page-btn" id="btn-prev" onclick="load(currentPage-1)" disabled>← Préc.</button>
+    <span id="page-label">—</span>
+    <button class="page-btn" id="btn-next" onclick="load(currentPage+1)" disabled>Suiv. →</button>
+  </div>
+
+  <footer>
+    <a href="/">← Accueil</a>
+    <a href="/beats">Health check</a>
+    <a href="/docs">API docs</a>
+    <a href="https://github.com/lenoirpatrick/githubwebhook" target="_blank" rel="noopener">GitHub</a>
+  </footer>
+
+  <script>
+    const PER_PAGE = 50;
+    let currentPage = 1, totalPages = 1;
+
+    async function load(page) {
+      currentPage = page;
+      const repo = document.getElementById('f-repo').value.trim();
+      const status = document.getElementById('f-status').value;
+      let url = `/api/history?page=${page}&per_page=${PER_PAGE}`;
+      if (repo)   url += `&repo=${encodeURIComponent(repo)}`;
+      if (status) url += `&status=${encodeURIComponent(status)}`;
+      const data = await fetch(url).then(r => r.json());
+      totalPages = Math.max(1, Math.ceil(data.total / PER_PAGE));
+      document.getElementById('total-label').textContent = `${data.total} entrée(s)`;
+      document.getElementById('page-label').textContent = `Page ${data.page} / ${totalPages}`;
+      document.getElementById('btn-prev').disabled = data.page <= 1;
+      document.getElementById('btn-next').disabled = data.page >= totalPages;
+      const tbody = document.getElementById('tbody');
+      if (data.items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">Aucune entrée.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.items.map(r => `<tr>
+        <td>${r.timestamp}</td>
+        <td>${r.action}</td>
+        <td>${r.repo ? `<code>${r.repo}</code>` : '<span style="color:#484f58">—</span>'}</td>
+        <td class="${r.status === 'ok' ? 'badge-ok' : 'badge-err'}">${r.status}</td>
+        <td class="msg" title="${(r.message||'').replace(/"/g,'&quot;')}">${r.message || '—'}</td>
+      </tr>`).join('');
+    }
+
+    load(1);
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
 
 
 def update_webhook(webhook_github):
@@ -632,13 +870,20 @@ def update_webhook(webhook_github):
             ['git', '-C', path_repo, 'reset', '--hard', 'HEAD'],
             check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
+        log_action('git_reset', repo=repo, status='ok')
+    except subprocess.CalledProcessError as exc:
+        log_action('git_reset', repo=repo, status='error', message=exc.stderr)
+        return {"result": False, "message": exc.stderr}
+
+    try:
         retour_git = subprocess.run(
             ['git', '-C', path_repo, 'pull'],
             check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
+        log_action('git_pull', repo=repo, status='ok', message=retour_git.stdout)
         return {"result": True, "message": retour_git.stdout}
-
     except subprocess.CalledProcessError as exc:
+        log_action('git_pull', repo=repo, status='error', message=exc.stderr)
         return {"result": False, "message": exc.stderr}
 
 
