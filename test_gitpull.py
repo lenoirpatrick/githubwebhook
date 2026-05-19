@@ -30,6 +30,7 @@ def patch_config(tmp_path):
     original = dict(gitpull.config_github)
     original_base = gitpull.BASE_DIR
     original_config_path = gitpull.CONFIG_PATH
+    original_db_path = gitpull.DB_PATH
 
     demo_dir = tmp_path / "demo"
     demo_dir.mkdir()
@@ -44,6 +45,8 @@ def patch_config(tmp_path):
     gitpull.config_github.update(CONFIG_FIXTURE)
     gitpull.BASE_DIR = tmp_path
     gitpull.CONFIG_PATH = config_path
+    gitpull.DB_PATH = tmp_path / "data" / "deployments.db"
+    gitpull._init_db()
 
     yield
 
@@ -51,6 +54,7 @@ def patch_config(tmp_path):
     gitpull.config_github.update(original)
     gitpull.BASE_DIR = original_base
     gitpull.CONFIG_PATH = original_config_path
+    gitpull.DB_PATH = original_db_path
 
 
 @pytest.fixture()
@@ -287,3 +291,123 @@ class TestLoadConfig:
         assert result == {"ip": "127.0.0.1"}
         assert missing_path.exists()
         gitpull.CONFIG_PATH = tmp_path / "config" / "config.json"
+
+
+# ---------------------------------------------------------------------------
+# #32 — log_action / _init_db
+# ---------------------------------------------------------------------------
+
+class TestLogAction:
+    def test_log_action_creates_db(self, tmp_path):
+        import gitpull
+        gitpull.log_action('startup')
+        assert gitpull.DB_PATH.exists()
+
+    def test_log_action_inserts_row(self, tmp_path):
+        import gitpull, sqlite3
+        gitpull.log_action('deploy', repo='owner/repo', status='ok', message='done')
+        with sqlite3.connect(gitpull.DB_PATH) as conn:
+            row = conn.execute("SELECT * FROM deployment_log WHERE action='deploy'").fetchone()
+        assert row is not None
+        assert row[3] == 'owner/repo'
+        assert row[4] == 'ok'
+
+
+# ---------------------------------------------------------------------------
+# #30 — POST /deploy
+# ---------------------------------------------------------------------------
+
+class TestDeploy:
+    def test_deploy_unknown_repo_returns_404(self, client):
+        resp = client.post("/deploy/unknown/repo")
+        assert resp.status_code == 404
+
+    def test_deploy_triggers_update(self, client, tmp_path):
+        import gitpull
+        gitpull.config_github["lenoirpatrick/testrepo"]["path"] = str(tmp_path)
+        with patch("subprocess.run", return_value=MagicMock(stdout="Already up to date.", returncode=0)):
+            resp = client.post("/deploy/lenoirpatrick/testrepo")
+        assert resp.status_code == 200
+        assert resp.json()["result"] is True
+
+
+# ---------------------------------------------------------------------------
+# #31 — POST /reload
+# ---------------------------------------------------------------------------
+
+class TestReload:
+    def test_reload_returns_ok(self, client):
+        with patch("os.execv"), patch("threading.Thread"):
+            resp = client.post("/reload")
+        assert resp.status_code == 200
+        assert resp.json()["result"] is True
+
+
+# ---------------------------------------------------------------------------
+# #34 — GET /api/history + GET /history
+# ---------------------------------------------------------------------------
+
+class TestHistory:
+    def test_api_history_empty(self, client):
+        resp = client.get("/api/history")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["items"] == []
+
+    def test_api_history_with_entries(self, client):
+        import gitpull
+        gitpull.log_action('deploy', repo='owner/repo', status='ok', message='done')
+        gitpull.log_action('deploy', repo='owner/repo', status='error', message='fail')
+        resp = client.get("/api/history")
+        assert resp.json()["total"] == 2
+
+    def test_api_history_filter_by_status(self, client):
+        import gitpull
+        gitpull.log_action('deploy', repo='owner/repo', status='ok')
+        gitpull.log_action('deploy', repo='owner/repo', status='error')
+        resp = client.get("/api/history?status=error")
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["items"][0]["status"] == "error"
+
+    def test_api_history_filter_by_repo(self, client):
+        import gitpull
+        gitpull.log_action('deploy', repo='owner/repoA', status='ok')
+        gitpull.log_action('deploy', repo='owner/repoB', status='ok')
+        resp = client.get("/api/history?repo=owner/repoA")
+        assert resp.json()["total"] == 1
+
+    def test_history_page_returns_html(self, client):
+        resp = client.get("/history")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "Historique" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# #35 — last_status dans GET /config/repos
+# ---------------------------------------------------------------------------
+
+class TestLastStatus:
+    def test_last_status_none_when_no_deploy(self, client):
+        resp = client.get("/config/repos")
+        data = resp.json()
+        assert data["lenoirpatrick/testrepo"]["last_status"] is None
+
+    def test_last_status_ok_after_successful_pull(self, client, tmp_path):
+        import gitpull
+        gitpull.config_github["lenoirpatrick/testrepo"]["path"] = str(tmp_path)
+        with patch("subprocess.run", return_value=MagicMock(stdout="ok", returncode=0)):
+            client.post("/deploy/lenoirpatrick/testrepo")
+        resp = client.get("/config/repos")
+        assert resp.json()["lenoirpatrick/testrepo"]["last_status"] == "ok"
+
+    def test_last_status_error_after_failed_pull(self, client, tmp_path):
+        import gitpull
+        gitpull.config_github["lenoirpatrick/testrepo"]["path"] = str(tmp_path)
+        error = subprocess.CalledProcessError(1, "git pull", stderr="fatal error")
+        with patch("subprocess.run", side_effect=[MagicMock(), error]):
+            client.post("/deploy/lenoirpatrick/testrepo")
+        resp = client.get("/config/repos")
+        assert resp.json()["lenoirpatrick/testrepo"]["last_status"] == "error"

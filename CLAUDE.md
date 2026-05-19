@@ -18,6 +18,12 @@ pip install -r requirements.txt
 python gitpull.py
 ```
 
+### Run in background (production-style)
+```shell
+./run.sh
+```
+Uses `nohup python gitpull.py &`; logs go to `nohup.out`.
+
 ### Lint
 ```shell
 pylint gitpull.py
@@ -46,7 +52,7 @@ The entire application is in a single file: `gitpull.py`.
 - **`/`** — Dark-themed HTML home page. Lists configured repos (loaded via `GET /config/repos`) with Add / Edit / Delete buttons. All CRUD actions use JS `fetch` — no page reload.
 - **`/beats`** — Health check; returns `{"result": true}`.
 - **`/webhook`** (POST) — Receives GitHub push events. Verifies the HMAC-SHA256 signature if `webhook_secret` is set in config. Only processes pushes to `refs/heads/main`. Calls `update_webhook()`.
-- **`/webhookdemo`** — Returns an HTML terminal-style page simulating `git reset` and `git pull` output. No real git commands are run.
+- **`/webhookdemo`** — Returns an HTML terminal-style page simulating `git reset` and `git pull` output. Reads `demo/demo.json` for repo metadata. No real git commands are run.
 - **`/docs`** — Swagger UI (built into FastAPI).
 - **`GET /config/repos`** — Lists configured repos (excludes `ip` and `webhook_secret` keys).
 - **`POST /config/repos`** — Adds a repo `{"repo": "owner/repo", "path": "/abs/path"}`. Returns 409 if already exists.
@@ -82,11 +88,40 @@ The entire application is in a single file: `gitpull.py`.
 
 ## Tests
 
-`test_gitpull.py` — 23 tests, 98% coverage. Uses `fastapi.testclient.TestClient` (synchronous). The `patch_config` autouse fixture swaps `gitpull.config_github`, `gitpull.BASE_DIR`, and `gitpull.CONFIG_PATH` in-process for each test, then restores them — no real config files are read or written during tests (except in `TestLoadConfig` which explicitly tests file creation).
+`test_gitpull.py` — 23 tests, 98% coverage. Uses `fastapi.testclient.TestClient` (synchronous).
+
+**`patch_config` autouse fixture** swaps three module-level globals for each test, then restores them:
+- `gitpull.config_github` — replaced with `CONFIG_FIXTURE` dict
+- `gitpull.BASE_DIR` — replaced with `tmp_path`
+- `gitpull.CONFIG_PATH` — replaced with `tmp_path/config/config.json`
+
+It also creates `tmp_path/demo/demo.json` so `/webhookdemo` can read it. No real config files are read or written during tests (except in `TestLoadConfig` which explicitly tests file creation).
+
+## Demo fixture
+
+`demo/demo.json` is a minimal GitHub push-event payload used by `/webhookdemo` and the test fixture. It contains `ref` and `repository.full_name`. `demo/demo_full.json` is a full GitHub payload sample (reference only, not used at runtime).
 
 ## CI
 
-`.github/workflows/build.yml` runs three jobs on push to `main` and on PRs:
+`.github/workflows/build.yml` triggers on push to `main` or `develop`, and on pull requests. Runs three jobs:
 - **test** — `pytest --cov` across Python 3.11, 3.12, 3.13; uploads `coverage.xml` as artifact.
-- **pylint** — linting across the same Python matrix.
+- **pylint** — linting (`pylint $(git ls-files '*.py')`) across the same Python matrix.
 - **sonarqube** — runs after `test`, regenerates `coverage.xml` and sends it to SonarCloud (requires `SONAR_TOKEN` secret).
+
+When bumping the app version (`app = FastAPI(version=...)`) also update `sonar-project.properties` → `sonar.projectVersion`.
+
+## Milestone 1.4.0 — features in progress
+
+Issues open in the GitHub project (all in Backlog):
+- **#29** — README badge → version 1.4.0
+- **#30** — `POST /deploy/{owner}/{repo}` endpoint + Deploy button on home page
+- **#31** — `POST /reload` endpoint + Reload button on home page (uses `os.execv`; page polls `/beats` and auto-redirects)
+- **#32** — SQLite `data/deployments.db`, table `deployment_log`, function `log_action()`
+- **#33** — Call `log_action()` for every significant action: `startup`, `webhook`, `git_reset`, `git_pull`, `deploy`, `reload`
+- **#34** — `GET /history` HTML page + `GET /api/history` JSON (paginated, filterable by repo/status)
+- **#35** — Error badge on home page rows when last deployment failed (enriches `GET /config/repos` response)
+- **#36** — Epic grouping #32–#35
+- **#37** — Swagger UI in dark mode
+- **#38** — Footer link to `https://github.com/lenoirpatrick/githubwebhook`
+
+Dependency order: **#32 → #33 → #34 and #35**. Issues #30, #31, #37, #38 are independent.

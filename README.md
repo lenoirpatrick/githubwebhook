@@ -1,6 +1,7 @@
 # githubwebhook
 Gestion du webhook Github pour déploiement CI/CD sur vos environnements.
 
+![version](https://img.shields.io/badge/version-1.4.0-blue.svg?style=flat)
 ![Python 3.11](https://img.shields.io/badge/python-3.11-green.svg?style=flat&logo=python&logoColor=white)
 ![Python 3.14](https://img.shields.io/badge/python-3.14-green.svg?style=flat&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.135-green.svg?style=flat&logo=flask&logoColor=white)
