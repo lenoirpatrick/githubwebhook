@@ -221,6 +221,7 @@ async def home():
   <footer>
     <a href="/beats">Health check</a>
     <a href="/docs">API docs</a>
+    <a href="https://github.com/lenoirpatrick/githubwebhook" target="_blank" rel="noopener">GitHub</a>
   </footer>
 
   <!-- Modal add/edit -->
@@ -463,6 +464,7 @@ def webhookdemo():
     <a href="/">← Accueil</a>
     <a href="/beats">Health check</a>
     <a href="/docs">API docs</a>
+    <a href="https://github.com/lenoirpatrick/githubwebhook" target="_blank" rel="noopener">GitHub</a>
   </footer>
 </body>
 </html>"""
