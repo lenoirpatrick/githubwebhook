@@ -659,8 +659,11 @@ def deploy(owner: str, repo_name: str):
     key = f"{owner}/{repo_name}"
     if key not in config_github:
         raise HTTPException(status_code=404, detail=f"Repo {key} non configuré")
-    log_action('deploy', repo=key, status='ok')
-    return update_webhook({"repository": {"full_name": key}})
+    result = update_webhook({"repository": {"full_name": key}})
+    log_action('deploy', repo=key,
+               status='ok' if result['result'] else 'error',
+               message=result.get('message', ''))
+    return result
 
 
 @app.post('/reload')
