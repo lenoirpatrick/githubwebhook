@@ -8,6 +8,7 @@ import subprocess
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -15,6 +16,7 @@ app = FastAPI(
     title="GitHub Webhook Server",
     description="Serveur de webhook GitHub pour déploiement CI/CD automatique via `git pull`.",
     version="1.3.0",
+    docs_url=None,
 )
 
 BASE_DIR = pathlib.Path(__file__).parent
@@ -43,6 +45,62 @@ config_github = _load_config()
 class RepoConfig(BaseModel):
     repo: str
     path: str
+
+
+_SWAGGER_DARK_CSS = """
+body { background-color: #0d1117 !important; }
+.swagger-ui { background-color: #0d1117; color: #c9d1d9; }
+.swagger-ui .info .title,
+.swagger-ui .info p,
+.swagger-ui .info li,
+.swagger-ui .info a { color: #c9d1d9; }
+.swagger-ui .info a { color: #58a6ff; }
+.swagger-ui .scheme-container { background: #161b22; box-shadow: none; border-bottom: 1px solid #30363d; }
+.swagger-ui .opblock-tag { color: #c9d1d9; border-bottom: 1px solid #30363d; }
+.swagger-ui .opblock-tag:hover { background: rgba(255,255,255,0.04); }
+.swagger-ui .opblock { border-color: #30363d !important; background: rgba(255,255,255,0.02) !important; }
+.swagger-ui .opblock .opblock-summary-description { color: #8b949e; }
+.swagger-ui .opblock .opblock-summary-path { color: #c9d1d9; }
+.swagger-ui .opblock.opblock-get .opblock-summary-method { background: #1f6feb; }
+.swagger-ui .opblock.opblock-post .opblock-summary-method { background: #238636; }
+.swagger-ui .opblock.opblock-put .opblock-summary-method { background: #9e6a03; }
+.swagger-ui .opblock.opblock-delete .opblock-summary-method { background: #b91c1c; }
+.swagger-ui .opblock-body pre.microlight,
+.swagger-ui .microlight { background: #161b22 !important; color: #c9d1d9 !important; }
+.swagger-ui .opblock-description-wrapper p,
+.swagger-ui .opblock-external-docs-wrapper p,
+.swagger-ui .opblock-title_normal p { color: #c9d1d9; }
+.swagger-ui table thead tr td,
+.swagger-ui table thead tr th { color: #8b949e; border-bottom: 1px solid #30363d; }
+.swagger-ui .response-col_status { color: #c9d1d9; }
+.swagger-ui .response-col_description p { color: #c9d1d9; }
+.swagger-ui .response-col_links { color: #8b949e; }
+.swagger-ui .responses-inner h4,
+.swagger-ui .responses-inner h5 { color: #c9d1d9; }
+.swagger-ui .model-box,
+.swagger-ui .model { background: #161b22; color: #c9d1d9; }
+.swagger-ui section.models { background: #161b22; border-color: #30363d; }
+.swagger-ui section.models h4 { color: #c9d1d9; }
+.swagger-ui .model-title { color: #c9d1d9; }
+.swagger-ui .prop-type { color: #58a6ff; }
+.swagger-ui input[type=text],
+.swagger-ui input[type=password],
+.swagger-ui textarea,
+.swagger-ui select { background: #0d1117; color: #c9d1d9; border-color: #30363d; }
+.swagger-ui .btn { color: #c9d1d9; border-color: #30363d; background: transparent; }
+.swagger-ui .btn.execute { background: #238636; border-color: #238636; color: #fff; }
+.swagger-ui .btn.authorize { color: #58a6ff; border-color: #58a6ff; }
+.swagger-ui .btn.cancel { color: #f85149; border-color: #f85149; }
+.swagger-ui .topbar { display: none; }
+.swagger-ui .arrow { filter: invert(1); }
+"""
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_docs():
+    html = get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} — Swagger UI")
+    content = html.body.decode().replace("</head>", f"<style>{_SWAGGER_DARK_CSS}</style></head>")
+    return HTMLResponse(content=content)
 
 
 @app.get("/", response_class=HTMLResponse)
