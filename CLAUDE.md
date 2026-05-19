@@ -49,26 +49,34 @@ pytest test_gitpull.py::TestWebhook::test_invalid_signature_returns_401 -v
 The entire application is in a single file: `gitpull.py`.
 
 **Endpoints:**
-- **`/`** — Dark-themed HTML home page. Lists configured repos (loaded via `GET /config/repos`) with Add / Edit / Delete buttons. All CRUD actions use JS `fetch` — no page reload.
+- **`/`** — Dark-themed HTML home page. Lists configured repos (loaded via `GET /config/repos`) with Deploy / Edit / Delete buttons and a colored status dot per repo. Reload button in the header card.
 - **`/beats`** — Health check; returns `{"result": true}`.
 - **`/webhook`** (POST) — Receives GitHub push events. Verifies the HMAC-SHA256 signature if `webhook_secret` is set in config. Only processes pushes to `refs/heads/main`. Calls `update_webhook()`.
 - **`/webhookdemo`** — Returns an HTML terminal-style page simulating `git reset` and `git pull` output. Reads `demo/demo.json` for repo metadata. No real git commands are run.
-- **`/docs`** — Swagger UI (built into FastAPI).
-- **`GET /config/repos`** — Lists configured repos (excludes `ip` and `webhook_secret` keys).
+- **`/docs`** — Swagger UI in dark mode (custom endpoint, default disabled via `docs_url=None`).
+- **`GET /config/repos`** — Lists configured repos (excludes `ip` and `webhook_secret` keys). Each entry includes `last_status` and `last_timestamp` from the deployment log.
 - **`POST /config/repos`** — Adds a repo `{"repo": "owner/repo", "path": "/abs/path"}`. Returns 409 if already exists.
 - **`PUT /config/repos/{owner}/{repo}`** — Updates the path of an existing repo. Returns 404 if not found.
 - **`DELETE /config/repos/{owner}/{repo}`** — Removes a repo. Returns 404 if not found.
+- **`POST /deploy/{owner}/{repo}`** — Manually triggers `git reset --hard HEAD` + `git pull` on the configured repo. Logs a `deploy` entry with the actual result status.
+- **`POST /reload`** — Restarts the server process via `os.execv` (0.5 s delay in a daemon thread). Logs a `reload` entry. The home page polls `/beats` and auto-redirects when the server is back up.
+- **`GET /api/history`** — Paginated JSON list of deployment log entries. Query params: `page` (default 1), `per_page` (default 50, max 200), `repo` (optional), `status` (optional).
+- **`GET /history`** — Dark-themed HTML page showing deployment history. Loads data from `/api/history` via JS; supports filtering by repo and status, and pagination.
 
 **Key functions:**
 - **`_load_config()`** — Loads `config/config.json`. If the file is absent, creates it with `{"ip": "127.0.0.1"}` and returns the default. Never raises on missing file.
 - **`_save_config()`** — Writes `config_github` back to `CONFIG_PATH`. Called after every CRUD mutation.
-- **`update_webhook(webhook_github)`** — Resolves the repo path, checks the directory exists, runs `git reset --hard HEAD` then `git pull` via `subprocess`. Returns `{"result": bool, "message": str}`.
+- **`_init_db()`** — Creates `data/deployments.db` and the `deployment_log` table if they don't exist (`CREATE TABLE IF NOT EXISTS`). Uses the current value of `DB_PATH` (patchable in tests). Idempotent.
+- **`log_action(action, repo, status, message)`** — Calls `_init_db()` then inserts a row into `deployment_log`. Called on: `startup`, `webhook`, `git_reset`, `git_pull`, `deploy`, `reload`.
+- **`update_webhook(webhook_github)`** — Resolves the repo path, checks the directory exists, runs `git reset --hard HEAD` (logs `git_reset`) then `git pull` (logs `git_pull`) via `subprocess`. Each step logged independently with `ok`/`error` status. Returns `{"result": bool, "message": str}`.
 
 **Key implementation details:**
-- `BASE_DIR = pathlib.Path(__file__).parent` and `CONFIG_PATH = BASE_DIR / 'config' / 'config.json'` are used for all file paths — server can be started from any directory.
-- `config_github` is a module-level dict loaded at startup; tests patch it directly along with `BASE_DIR` and `CONFIG_PATH`.
+- `BASE_DIR = pathlib.Path(__file__).parent`, `CONFIG_PATH = BASE_DIR / 'config' / 'config.json'`, and `DB_PATH = BASE_DIR / 'data' / 'deployments.db'` are module-level variables — server can be started from any directory, and all three are patchable in tests.
+- `config_github` is a module-level dict loaded at startup; tests patch it directly along with `BASE_DIR`, `CONFIG_PATH`, and `DB_PATH`.
+- FastAPI lifespan (`_lifespan`) calls `log_action('startup')` on server start. Not triggered in tests (TestClient without context manager).
+- Swagger UI dark mode: `docs_url=None` disables the default UI; `GET /docs` injects a `<style>` block with GitHub-dark CSS overrides into the HTML returned by `get_swagger_ui_html`.
 - HMAC verification uses `hmac.compare_digest` to prevent timing attacks. Skipped if `webhook_secret` is absent from config.
-- `subprocess.run(check=True)` is wrapped in `try/except CalledProcessError` — errors surface in the JSON response, not as 500s.
+- `subprocess.run(check=True)` is wrapped in separate `try/except CalledProcessError` blocks for reset and pull — each step logged independently.
 
 ## Configuration
 
@@ -86,16 +94,32 @@ The entire application is in a single file: `gitpull.py`.
 
 `webhook_secret` must match the secret configured in the GitHub webhook settings for HMAC validation to work. The file is created automatically on first startup if missing.
 
+## Database
+
+`data/deployments.db` — SQLite database created automatically on first use.
+
+**Table `deployment_log`:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `timestamp` | TEXT | UTC ISO-8601, set by SQLite default |
+| `action` | TEXT | `startup`, `webhook`, `git_reset`, `git_pull`, `deploy`, `reload` |
+| `repo` | TEXT | `owner/repo` or NULL for non-repo actions |
+| `status` | TEXT | `ok` or `error` |
+| `message` | TEXT | Git output or error message |
+
 ## Tests
 
-`test_gitpull.py` — 23 tests, 98% coverage. Uses `fastapi.testclient.TestClient` (synchronous).
+`test_gitpull.py` — 36 tests. Uses `fastapi.testclient.TestClient` (synchronous).
 
-**`patch_config` autouse fixture** swaps three module-level globals for each test, then restores them:
+**`patch_config` autouse fixture** swaps four module-level globals for each test, then restores them:
 - `gitpull.config_github` — replaced with `CONFIG_FIXTURE` dict
 - `gitpull.BASE_DIR` — replaced with `tmp_path`
 - `gitpull.CONFIG_PATH` — replaced with `tmp_path/config/config.json`
+- `gitpull.DB_PATH` — replaced with `tmp_path/data/deployments.db`; `_init_db()` is called immediately after patching
 
-It also creates `tmp_path/demo/demo.json` so `/webhookdemo` can read it. No real config files are read or written during tests (except in `TestLoadConfig` which explicitly tests file creation).
+It also creates `tmp_path/demo/demo.json` so `/webhookdemo` can read it. No real config or DB files are read or written during tests (except in `TestLoadConfig`).
 
 ## Demo fixture
 
@@ -109,19 +133,3 @@ It also creates `tmp_path/demo/demo.json` so `/webhookdemo` can read it. No real
 - **sonarqube** — runs after `test`, regenerates `coverage.xml` and sends it to SonarCloud (requires `SONAR_TOKEN` secret).
 
 When bumping the app version (`app = FastAPI(version=...)`) also update `sonar-project.properties` → `sonar.projectVersion`.
-
-## Milestone 1.4.0 — features in progress
-
-Issues open in the GitHub project (all in Backlog):
-- **#29** — README badge → version 1.4.0
-- **#30** — `POST /deploy/{owner}/{repo}` endpoint + Deploy button on home page
-- **#31** — `POST /reload` endpoint + Reload button on home page (uses `os.execv`; page polls `/beats` and auto-redirects)
-- **#32** — SQLite `data/deployments.db`, table `deployment_log`, function `log_action()`
-- **#33** — Call `log_action()` for every significant action: `startup`, `webhook`, `git_reset`, `git_pull`, `deploy`, `reload`
-- **#34** — `GET /history` HTML page + `GET /api/history` JSON (paginated, filterable by repo/status)
-- **#35** — Error badge on home page rows when last deployment failed (enriches `GET /config/repos` response)
-- **#36** — Epic grouping #32–#35
-- **#37** — Swagger UI in dark mode
-- **#38** — Footer link to `https://github.com/lenoirpatrick/githubwebhook`
-
-Dependency order: **#32 → #33 → #34 and #35**. Issues #30, #31, #37, #38 are independent.
